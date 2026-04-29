@@ -3,25 +3,60 @@ import os
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QComboBox, QSlider, QSpinBox, QFrame, QListWidget,
-    QTabWidget, QLineEdit,QFileDialog, QComboBox, QMessageBox,QListWidget, QListWidgetItem,QFormLayout
+    QTabWidget, QLineEdit,QFileDialog, QComboBox, QMessageBox,QListWidget, QListWidgetItem,QFormLayout,
+    QCompleter
 )
+
 from PyQt5.QtGui import QIcon
-from PyQt5.QtCore import QSize
+from PyQt5.QtCore import QSize,Qt,QStringListModel,QSortFilterProxyModel
 from PyQt5.QtGui import QPixmap
-from PyQt5.QtCore import Qt
 from win32com.client import Dispatch
 from PIL import Image
 from pathlib import Path
+import pandas as pd
+
+# ================= SEARCHABLE COMBO =================
+class SearchableComboBox(QComboBox):
+    def __init__(self, items):
+        super().__init__()
+
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.NoInsert)
+
+        # Base model
+        self.model = QStringListModel(items)
+
+        # Proxy model (filter)
+        self.proxy_model = QSortFilterProxyModel(self)
+        self.proxy_model.setSourceModel(self.model)
+        self.proxy_model.setFilterCaseSensitivity(Qt.CaseInsensitive)
+
+        self.setModel(self.proxy_model)
+
+        # Completer
+        self.completer = QCompleter(self.proxy_model, self)
+        self.completer.setCompletionMode(QCompleter.PopupCompletion)
+        self.setCompleter(self.completer)
+
+        self.lineEdit().setPlaceholderText("Search supplier...")
+        # self.lineEdit().setFixedHeight(35)
+        # self.lineEdit().setFixedWidth(350)
+
+        self.lineEdit().textEdited.connect(self.filter_items)
+
+    def filter_items(self, text):
+        self.proxy_model.setFilterRegularExpression(f".*{text}.*")
+        self.showPopup()
 
 class ScannerApp(QWidget):
-    def __init__(self):
+    def __init__(self,image_path, currentTabName ):
         super().__init__()
         self.setWindowTitle("Scanner App (Canon WIA)")
-        self.setStyleSheet("background-color: #2b2b2b; color: white;")
-        self.image_path = ""
+        self.setStyleSheet("background-color: #2b2b2b; color: white; font-size:15px; font-weight: 300")
+        self.image_path = image_path
         self.insideScans = "scans"
-        self.path = Path.cwd() / self.insideScans
-        self.currentTabName = ""
+        self.path = Path(__file__).parent / self.insideScans
+        self.currentTabName = currentTabName
         self.init_ui()
 
     def init_ui(self):
@@ -32,6 +67,7 @@ class ScannerApp(QWidget):
         left_layout = QVBoxLayout()
 
         # left_layout.addWidget(QLabel("SITE:"))
+         # Product dropdown with search
 
         self.site_combo = QComboBox()
         self.site_combo.setFixedHeight(35)
@@ -48,15 +84,27 @@ class ScannerApp(QWidget):
          # --- FORM INPUTS ---
         form_layout = QFormLayout()
 
-        self.supplier_input = QLineEdit()
+        # self.supplier_input = QLineEdit()
+        # self.supplier_input = QComboBox()
+        # self.supplier_input.setFixedHeight(35)
+        # self.supplier_input.setFixedWidth(350)
         self.invoice_input = QLineEdit()
+        self.invoice_input.setFixedHeight(35)
+        self.invoice_input.setFixedWidth(350)
         self.amount_input = QLineEdit()
+        self.amount_input.setFixedHeight(35)
+        self.amount_input.setFixedWidth(350)
 
-        self.supplier_input.setPlaceholderText("Enter supplier name")
+        suppliers = self.load_suppliers_from_excel("suppliers.xlsx")
+
+        self.supplier_combo = SearchableComboBox(suppliers)
+        
+
+        # self.supplier_input.setPlaceholderText("Enter supplier name")
         self.invoice_input.setPlaceholderText("Enter invoice number")
         self.amount_input.setPlaceholderText("Enter amount")
 
-        form_layout.addRow("Supplier:", self.supplier_input)
+        form_layout.addRow("Supplier:", self.supplier_combo)
         form_layout.addRow("Invoice No:", self.invoice_input)
         form_layout.addRow("Amount:", self.amount_input)
 
@@ -93,13 +141,23 @@ class ScannerApp(QWidget):
 
         self.setLayout(main_layout)
 
+    def load_suppliers_from_excel(self,file_path):
+        df = pd.read_excel(file_path)
+
+        # Adjust column name if needed
+        suppliers = df["SUPPLIER"].dropna().astype(str).unique().tolist()
+        # print(suppliers)
+
+        return sorted(suppliers)
+
     def load_folders(self):
         self.site_combo.clear()
-        subdirs = [f.name for f in self.path.iterdir() if f.is_dir()]
-        self.site_combo.addItems(subdirs)
+        # subdirs = [f.name for f in self.path.iterdir() if f.is_dir()]
+        self.site_combo.addItems([self.currentTabName])
 
     def save_file(self):
         print(self.path/self.site_combo.currentText())
+        print(self.currentTabName)
         # if not self.image_path:
         #     QMessageBox.warning(self, "Warning", "No scanned image")
         #     return
@@ -124,9 +182,10 @@ class ScannerUI(QWidget):
         super().__init__()
         self.setWindowTitle("Scanner UI")
         self.setGeometry(100, 100, 1200, 700)
-        self.setStyleSheet("background-color: #eee; color: #333;")
+        self.setStyleSheet("background-color: #eee; color: #333; font-size:15px; font-weight: 300;")
 
         main_layout = QHBoxLayout(self)
+        self.currentTabName_sc = ""
 
         # ===== LEFT PANEL =====
         left_panel = QFrame()
@@ -259,6 +318,7 @@ class ScannerUI(QWidget):
         # Tab click function
         # self.tabs.setCornerWidget(self.tabs.findChild(self.create_tab(0)))
         self.tabs.currentChanged.connect(self.tab_changed)
+        self.currentTabName_sc = self.tab_changed(0)
 
         right_panel.addLayout(top_bar)
         right_panel.addWidget(self.tabs)
@@ -278,7 +338,7 @@ class ScannerUI(QWidget):
 
         list_widget = QListWidget()
         list_widget.setIconSize(QSize(100, 100))  # preview size
-        self.currentTabName = folder_name
+        
         # Loop through files in folder
         folder_paths = self.path/folder_name
         for file in folder_paths.iterdir():
@@ -334,8 +394,8 @@ class ScannerUI(QWidget):
     # ===== TAB CLICK FUNCTION =====
     def tab_changed(self, index):
         name = self.tabs.tabText(index)
-        # self.create_tab(Path.cwd()/name)
-        print(f"Switched to Tab {name},{index}")
+        self.currentTabName_sc = name
+        self.window = ScannerApp("",self.currentTabName_sc)
         return name
     
     def doc_view(self, start_path='.'):
@@ -354,7 +414,9 @@ class ScannerUI(QWidget):
 
     # ===== SEARCH BUTTON FUNCTION =====
     def search_action(self, tab_name, text):
-        print(f"Searching '{text}' in {tab_name}")
+        self.window = ScannerApp()
+        self.window.currentTabName = tab_name
+        # print(f"Searching '{text}' in {tab_name}")
     
     def scan_document(self):
         scanner_name=None
@@ -395,8 +457,9 @@ class ScannerUI(QWidget):
             Image.open(temp_bmp).convert("RGB").save("image.jpg")
             os.remove(temp_bmp)
             print(f"✅ Scan saved to: {"image.jpg"}")
-            self.window = ScannerApp()
+            self.window = ScannerApp("","self.currentTabName_sc",)
             self.window.image_path = "image.jpg"
+            # self.window.currentTabName = self.currentTabName_sc
             pixmap = QPixmap(self.window.image_path)
             self.window.show()
             self.window.preview.setPixmap(pixmap.scaled(
@@ -410,8 +473,7 @@ class ScannerUI(QWidget):
             print("❌ Error:", e)
             return None
     def openlog(self):
-        print("hello")
-        self.window = ScannerApp()
+        self.window = ScannerApp("",self.currentTabName_sc)
         # self.window.image_path = "image.jpg"
         # pixmap = QPixmap(self.window.image_path)
         self.window.show()
@@ -424,6 +486,6 @@ class ScannerUI(QWidget):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle('Fusion') 
-    window = ScannerApp()
+    window = ScannerUI()
     window.show()
     sys.exit(app.exec_())
